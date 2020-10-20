@@ -52,11 +52,11 @@ dmcc34 <- c(
   144, 148, 172, 175, 185, 189, 219, 301, 303, 306, 314, 340, 346, 347, 349, 350, 353
 )
 
-# target.trs <- list(
-#   Axcpt = 7:12,
-#   Cuedts = 7:11,
-#   Stern = 11:16,
-#   Stroop = 2:6
-# )
+target.trs <- list(
+  Axcpt = 4,
+  Cuedts = 4,
+  Stern = 6,
+  Stroop = 2
+)
 
 
