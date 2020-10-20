@@ -1,0 +1,68 @@
+dont source me!
+
+
+library(dplyr)
+library(data.table)
+library(magrittr)
+library(here)
+
+
+dir.sheets <- "C:/Users/mcf/Box/DMCC_Phase2(HCP)/Preprocessed_Data/_wrangled"
+
+subjs <- c(
+  "107321", "115825", "123117", "130114", "130518", "132017", "135730","138837", "141422", "150423", "155938", "158136", "160830", "161832", 
+  "165032", "171330", "173738", "178243", "178647", "178950", "182436", "197449", "203418", "204319", "233326", "250427", "300618", "317332", 
+  "346945", "352738", "393550", "448347", "580650", "594156", "601127", "672756", "729254", "765864", "814649", "843151", "849971", "873968", 
+  "877168", "DMCC1328342", "DMCC1596165", "DMCC1624043", "DMCC1971064", "DMCC2442951", "DMCC2609759", "DMCC2803654", "DMCC2834766", 
+  "DMCC3062542", "DMCC3204738", "DMCC3963378", "DMCC4191255", "DMCC4260551", "562345", "DMCC5009144", "DMCC5195268", "DMCC5775387",
+  "DMCC6371570", "DMCC6418065", "DMCC6484785", "DMCC6627478", "DMCC6661074", "DMCC6671683", "DMCC6705371", "DMCC6721369", "DMCC6904377",
+  "DMCC6960387", "DMCC7297690", "DMCC7921988", "DMCC8033964", "DMCC8050964", "DMCC8078683", "DMCC8214059", "DMCC8260571", 
+  "DMCC9441378", "DMCC9478705", "DMCC9953810"
+  )
+
+axcpt  <- fread(file.path(dir.sheets, "dmcc2_behavior-and-events_axcpt.csv"))[subj %in% subjs]
+cuedts <- fread(file.path(dir.sheets, "dmcc2_behavior-and-events_cuedts.csv"))[subj %in% subjs]
+stern  <- fread(file.path(dir.sheets, "dmcc2_behavior-and-events_sternberg.csv"))[subj %in% subjs]
+stroop <- fread(file.path(dir.sheets, "dmcc2_behavior-and-events_stroop.csv"))[subj %in% subjs]
+
+
+## this section adapts columns within behav-and-event sheets to match the format of DMCC naming conventions.
+
+axcpt$task  <- "Axcpt"
+cuedts$task <- "Cuedts"
+stern$task  <- "Stern"
+stroop$task <- "Stroop"
+
+axcpt$session  %<>% vapply(switch, character(1), "bas" = "baseline", "pro" = "proactive", "rea" = "reactive")
+cuedts$session %<>% vapply(switch, character(1), "bas" = "baseline", "pro" = "proactive", "rea" = "reactive")
+stern$session  %<>% vapply(switch, character(1), "bas" = "baseline", "pro" = "proactive", "rea" = "reactive")
+stroop$session %<>% vapply(switch, character(1), "bas" = "baseline", "pro" = "proactive", "rea" = "reactive")
+
+cuedts$trial.type %<>% vapply(switch, character(1), "c" = "Con", "i" = "InCon")
+cuedts$incentive  %<>% vapply(switch, character(1), "nonincentive" = "NoInc", "incentive" = "Inc")
+cuedts$incentive[cuedts$session == "baseline" & cuedts$target.color.orig == "green"] <- "Inc"
+cuedts$switch[cuedts$switch == "stay"]   <- "Repeat"
+cuedts$switch[cuedts$switch == "switch"] <- "Switch"
+cuedts$switch[cuedts$switch == ""] <- NA
+cuedts$trial.type.switch <- 
+  ifelse(cuedts$trial.num %in% c(1, 19, 37), "trial1", paste0(cuedts$trial.type, cuedts$switch))
+
+stern$load01 <- ifelse(stern$load == 5, "LL5", "not5")
+stern$load01.trial.type <- paste0(stern$load01, stern$trial.type)
+
+
+stroop$trial.type %<>% vapply(switch, character(1), "c" = "Con", "i" = "InCon")
+is.pc50 <- stroop$pc == "pc50"
+is.bias <- stroop$pc == "mi" | (stroop$pc == "mc" & stroop$session == "baseline")
+is.buff <- stroop$pc == "mc" & stroop$session == "reactive"
+stroop$pc[is.pc50]   <- "PC50"
+stroop$pc[is.bias]   <- "bias"
+stroop$pc[is.buff]   <- "buff"
+stroop$pc.trial.type <- paste0(stroop$pc, stroop$trial.type)
+
+
+fwrite(stroop, here("in", "multiparc_stroop_behav-events.csv"))
+fwrite(axcpt, here("in", "multiparc_axcpt__behav-events.csv"))
+fwrite(cuedts, here("in", "multiparc_cuedts_behav-events.csv"))
+fwrite(stern, here("in", "multiparc_stern_behav-events.csv"))
+fwrite(as.data.frame(subjs), here("in", "multiparc_subjects.txt"), quote = FALSE, col.names = FALSE)
