@@ -1,6 +1,6 @@
 
 source(here::here("code", "_packages.R"))
-# source(here("code", "read-behav.R"))
+source(here("code", "read-behav.R"))
 source(here("code", "_vars.R"))
 source(here("code", "_atlases.R"))
 source(here("code", "_settings.R"))
@@ -9,18 +9,19 @@ source(here("code", "_settings.R"))
 ## input: subjs, task, session, glmname
 ## output: RDS files
 
-dirs <- expand.grid(subj = subjs, task = tasks, session = "baseline", stringsAsFactors = FALSE)
-glminfo <- data.frame(
-  task = c("Axcpt", "Cuedts", "Stern", "Stroop", "Stroop"),
-  name.glm = c(
-    "baseline_Cues_EVENTS_censored_shifted", 
-    "baseline_CongruencySwitch_EVENTS_censored_shifted",
-    "baseline_ListLength_EVENTS_censored_shifted",
-    "baseline_Congruency_EVENTS_censored_shifted",
-    "baseline_fix-item_EVENTS_censored"
-  )
+
+roimeans_hilo <- array(
+  NA,
+  dim = c(
+    length(subjs),
+    length(parcellation$key),
+    length(tasks),
+    length(sessions),
+    2
+  ),
+  dimnames = list(subj = subjs, parcel = parcellation$key, task = tasks, session = sessions)
 )
-glminfo <- as.data.table(glminfo)
+
 
 ## loop over tasks, subjs, runs; write 3droistats to results
 

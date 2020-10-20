@@ -1,6 +1,6 @@
 nodename <- Sys.info()["nodename"]
 
-dir.nil.dmcc2.afni <- "/data/nil-bluearc/ccp-hcp/DMCC_ALL_BACKUPS/HCP_SUBJECTS_BACKUPS/AFNI_ANALYSIS"
+dir.nil.dmcc2.afni <- "/data/nil-bluearc/ccp-hcp/DMCC_ALL_BACKUPS/HCP_SUBJECTS_BACKUPS/fMRIPrep_AFNI_ANALYSIS/"
 
 nodename <- Sys.info()["nodename"]
 
@@ -21,23 +21,30 @@ if (nodename == "ccplinux1") {
 
 n.cores <- detectCores()
 
-
 tasks <- c("Axcpt", "Cuedts", "Stern", "Stroop")
-dir.analysis <- here("out", "glms")
+glms <- c(
+  "Cues_EVENTS_censored", 
+  "CongruencyIncentive_EVENTS_censored",
+  "ListLength_EVENTS_censored",
+  "Congruency_EVENTS_censored"
+)
+sessions <- c("baseline", "proactive", "reactive")
+sessions.short <- c("Bas", "Pro", "Rea")
+
 
 n.trs <- c(
-  Axcpt   = 1220,
-  # Axcpt_proactive  = 1220,
-  # Axcpt_reactive   = 1220,
-  Cuedts  = 1300,
-  # Cuedts_proactive = 1300,
-  # Cuedts_reactive  = 1300,
-  Stern   = 1200,
-  # Stern_proactive  = 1200,
-  # Stern_reactive   = 1200,
-  Stroop  = 1080
-  # Stroop_proactive = 1080,
-  # Stroop_reactive  = 1180
+  Axcpt_baseline   = 1220,
+  Axcpt_proactive  = 1220,
+  Axcpt_reactive   = 1220,
+  Cuedts_baseline  = 1300,
+  Cuedts_proactive = 1300,
+  Cuedts_reactive  = 1300,
+  Stern_baseline   = 1200,
+  Stern_proactive  = 1200,
+  Stern_reactive   = 1200,
+  Stroop_baseline  = 1080,
+  Stroop_proactive = 1080,
+  Stroop_reactive  = 1180
 )
 
 dmcc34 <- c(
@@ -45,11 +52,11 @@ dmcc34 <- c(
   144, 148, 172, 175, 185, 189, 219, 301, 303, 306, 314, 340, 346, 347, 349, 350, 353
 )
 
-target.trs <- list(
-  Axcpt = 7:12,
-  Cuedts = 7:11,
-  Stern = 11:16,
-  Stroop = 2:6
-)
+# target.trs <- list(
+#   Axcpt = 7:12,
+#   Cuedts = 7:11,
+#   Stern = 11:16,
+#   Stroop = 2:6
+# )
 
 
