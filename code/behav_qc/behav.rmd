@@ -1,0 +1,41 @@
+---
+title: "behavioral QC analyses"
+author: "michael freund"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    theme: spacelab
+    highlight: zenburn
+---
+
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(
+  fig.align = 'center', fig.width = 11.5, fig.fullwidth = TRUE, cache = TRUE
+)
+
+source(here::here("code", "_packages.R"))
+source(here("code", "read-behav.R"))
+source(here("code", "_vars.R"))
+source(here("code", "_atlases.R"))
+source(here("code", "_settings.R"))
+
+# behav <- fread(here("in", "behavior-and-events_group201902.csv"))
+cl1 <- lmeControl(maxIter = 1E5, msMaxIter = 1E5, niterEM = 1E5, msMaxEval = 1E5)
+
+```
+
+# Axcpt
+
+## group-level
+
+```{r}
+
+axcpt %>% filter
+
+```
+
