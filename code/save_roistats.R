@@ -32,15 +32,17 @@ for (subj.i in seq_along(subjs)) {
       
       # subj.i = 1; parcel.i = 1; task.i = 1; session.i = 1
       
-      fname.i <- 
+      fname.i <-
         file.path(
-        dir.nil.dmcc2.afni, subjs[subj.i], "SURFACE_RESULTS",  tasks[task.i], 
-        paste0(sessions[session.i], "_", glms[task.i]),
-        paste0(
-          subjs[subj.i], "_timecourses_", sessions[session.i], 
-          "_HI_LO_conf_Coef_tents_Schaefer2018_400Parcels_7Networks_order_10K"
+          dir.nil.dmcc2.afni, subjs[subj.i], "SURFACE_RESULTS",  tasks[task.i],
+          paste0(sessions[session.i], "_", glms[task.i]),
+          paste0(
+            subjs[subj.i], "_timecourses_", sessions[session.i], "_", contrs[task.i],
+            "_Coef_tents_Schaefer2018_400Parcels_7Networks_order_10K"
+            )
           )
-        )
+      
+      if (!file.exists(paste0(fname.i, "_L.txt"))) next
       
       L <- colMeans(as.matrix(fread(paste0(fname.i, "_L.txt"))[target.trs[[task.i]], -(1:2)]))
       R <- colMeans(as.matrix(fread(paste0(fname.i, "_R.txt"))[target.trs[[task.i]], -(1:2)]))

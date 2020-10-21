@@ -60,3 +60,9 @@ target.trs <- list(
 )
 
 
+contrs <- c(
+  "HI_LO_conf",
+  "InCon_Con",
+  "RN_NN_LL5",
+  "InCon_Con_bias"
+)
