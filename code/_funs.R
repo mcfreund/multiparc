@@ -134,3 +134,6 @@ read_resid <- function(
   
 }
 
+get.network <- function(x) {
+  gsub("^.H_(Vis|SomMot|Cont|Default|Limbic|SalVentAttn|DorsAttn)_.*", "\\1", x)
+}
