@@ -1,0 +1,800 @@
+---
+title: "behavioral QC analyses"
+author: "michael freund"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    theme: spacelab
+    highlight: zenburn
+---
+
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(
+  fig.align = 'center', fig.width = 11.5, fig.fullwidth = TRUE, cache = TRUE
+)
+
+source(here::here("code", "_packages.R"))
+source(here("code", "read-behav.R"))
+source(here("code", "_vars.R"))
+source(here("code", "_funs.R"))
+source(here("code", "_packages.R"))
+source(here("code", "_atlases.R"))
+source(here("code", "_settings.R"))
+
+# cl1 <- lmeControl(maxIter = 1E5, msMaxIter = 1E5, niterEM = 1E5, msMaxEval = 1E5)
+
+a <- readRDS(here("out", "roistats_hilo_target_2trpk_unshifted.RDS"))
+
+is.missing <- apply(a, 1, function(x) any(is.na(x)))
+is.complete <- 
+  rowSums(with(axcpt, table(subj, session)) > 0) > 2 &
+  rowSums(with(cuedts, table(subj, session)) > 0) > 2 &
+  rowSums(with(stern, table(subj, session)) > 0) > 2 &
+  rowSums(with(stroop, table(subj, session)) > 0) > 2
+
+include <- Reduce(
+  intersect,
+  list(subjs[is.complete], subjs[!is.missing])
+)
+
+a <- a[include, , , ]
+
+```
+
+* `r sum(is.missing)` subjs missing some data and therefore excluded
+* `r dim(a)[1]` subjs left
+
+# baseline
+
+## glance at group-level
+
+```{r}
+
+b <- a[, , , "baseline"]
+
+## multivariate outliers?
+
+mahal <- apply(
+  b, "task", function(x) mahalanobis(x, center = colMeans(x), cov = cov.shrink(x))
+)
+mahal %>%
+  as.data.frame %>%
+  reshape2::melt() %>%
+
+  ggplot(aes(sample = value)) +
+  
+  stat_qq(distribution = qchisq, dparams = list(df = 400)) +
+  stat_qq_line(distribution = qchisq, dparams = list(df = 400)) +
+  facet_grid(cols = vars(variable))
+
+
+## univariate outliers?
+
+b %>%
+  reshape2::melt() %>%
+  as.data.frame %>%
+
+  ggplot(aes(x = parcel, y = value)) +
+  
+  geom_boxplot(width = 0.1, notch = TRUE, fill = "grey40") +
+  facet_grid(vars(task))
+
+
+b %>%
+  reshape2::melt() %>%
+  as.data.frame %>%
+
+  ggplot(aes(x = value)) +
+  
+  geom_density(aes(color = task), size = 2) +
+  scale_color_brewer(type = "qual", palette = 2)
+
+
+b.pvals <- apply(
+  b, c("task", "parcel"), function(x) wilcox.test(x, alternative = "greater")$p.value
+  ) %>%
+  apply("task", p.adjust, "fdr") %>% as.data.frame
+
+b.pvals %>% filter(Axcpt < 0.05) %>% nrow
+b.pvals %>% filter(Cuedts < 0.05) %>% nrow
+b.pvals %>% filter(Stern < 0.05) %>% nrow
+b.pvals %>% filter(Stroop < 0.05) %>% nrow
+
+```
+
+
+
+## profiles
+
+
+```{r}
+
+# bs <- b %>% apply(c("task", "subj"), function(x) x / sd(x))
+bs <- b %>% apply(c("task", "subj"), function(x) x)
+
+means <- bs %>% apply(c("task", "parcel"), mean) %>% t %>% as.data.frame %>% tibble::rownames_to_column("parcel")
+esize <- bs %>% apply(c("task", "parcel"), function(x) mean(x) / sd(x)) %>% t %>% 
+  as.data.frame %>% tibble::rownames_to_column("parcel")
+pca <- bs %>% apply("task", prcomp)
+loads <- pca %>% map(~ .$x[, 1]) %>% bind_cols
+loads$parcel <- parcellation$key
+
+## scree plot
+
+lapply(pca, plot)
+
+## profiles
+
+means %>%
+  reshape2::melt(value.name = "std_beta", variable.name = "task") %>%
+  
+  ggplot(aes(parcel, std_beta, color = task, group = task)) +
+  
+  geom_line(size = 1) +
+  scale_color_brewer(type = "qual", palette = 2) +
+  
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  
+
+esize %>%
+  reshape2::melt(value.name = "std_beta", variable.name = "task") %>%
+  
+  ggplot(aes(parcel, std_beta, color = task, group = task)) +
+  
+  geom_line(size = 1) +
+  scale_color_brewer(type = "qual", palette = 2) +
+  
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+
+loads %>%
+  reshape2::melt(value.name = "std_beta", variable.name = "task") %>%
+  
+  ggplot(aes(parcel, std_beta, color = task, group = task)) +
+  
+  geom_line(size = 1) +
+  scale_color_brewer(type = "qual", palette = 2) +
+  
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+## correlations
+
+means %>% 
+  select(-parcel) %>% 
+  cor %>% 
+  symmat4ggplot %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "black") +
+  geom_text(aes(label = round(value, 2)), color = "firebrick")
+
+esize %>% 
+  select(-parcel) %>% 
+  cor %>% 
+  symmat4ggplot %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "black") +
+  geom_text(aes(label = round(value, 2)), color = "firebrick")
+
+loads %>% 
+  select(-parcel) %>% 
+  cor %>% 
+  symmat4ggplot %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "black") +
+  geom_text(aes(label = round(value, 2)), color = "firebrick")
+
+
+```
+
+
+
+## scores
+
+### RT
+
+```{r}
+
+## quick look:
+
+axcpt %>% 
+  filter(
+    subj %in% dimnames(a)$subj, trialacc == 1, !is.na(target.rt), target.rt > 0,
+    session == "baseline"
+    ) %>%
+  pull(target.rt) %>% plot
+
+cuedts %>% 
+  filter(
+    subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+    session == "baseline"
+    ) %>%
+  pull(rt) %>% plot
+
+stern %>% 
+  filter(
+    subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+    session == "baseline"
+    ) %>%
+  pull(rt) %>% plot
+
+
+stroop %>% 
+  filter(
+    subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+    session == "baseline"
+    ) %>%
+  pull(rt) %>% plot
+
+
+## initial models
+
+axcpt.rt <- axcpt %>% filter(
+  subj %in% dimnames(a)$subj, trialacc == 1, !is.na(target.rt), target.rt > 0,
+  session == "baseline", trial.type %in% c("BX", "BY")
+  ) %>%
+  mutate(trial.type = relevel(as.factor(trial.type), "BY"))
+
+m.axcpt0 <- lmer(
+  target.rt ~ trial.type + (trial.type | subj),
+  axcpt.rt
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.axcpt0)
+
+cuedts.rt <- cuedts %>% filter(
+    subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+    session == "baseline"
+  )
+
+m.cuedts0 <- lmer(
+  rt ~ trial.type + (trial.type | subj),
+  cuedts.rt
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.cuedts0)
+
+stern.rt <- stern %>% filter(
+  subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+  session == "baseline", load01 == "LL5", trial.type %in% c("RN", "NN")
+)
+
+m.stern0 <- lmer(
+  rt ~ trial.type + (trial.type | subj),
+  stern.rt
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.stern0)
+
+stroop.rt <- stroop %>% filter(
+    subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+    pc == "bias",
+    session == "baseline"
+)
+
+m.stroop0 <- lmer(
+  rt ~ trial.type + (trial.type | subj),
+  stroop.rt
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.stroop0)
+
+rt <- data.frame(
+  Axcpt = coef(m.axcpt0)$subj[, 2],
+  Cuedts = coef(m.cuedts0)$subj[, 2],
+  Stern = coef(m.stern0)$subj[, 2],
+  Stroop = coef(m.stroop0)$subj[, 2]
+)
+
+cor(rt)
+
+
+
+
+
+```
+
+
+### error
+
+
+
+
+```{r}
+
+## initial models
+
+axcpt.er <- axcpt %>% filter(
+  subj %in% dimnames(a)$subj, cue.acc == 1,
+  session == "baseline", trial.type %in% c("BX", "BY")
+  ) %>%
+  mutate(trial.type = relevel(as.factor(trial.type), "BY"))
+
+m.axcpt0.er <- glmer(
+  1-target.acc ~ trial.type + (trial.type | subj),
+  axcpt.er,
+  family = "binomial"
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.axcpt0.er)
+
+cuedts.er <- cuedts %>% filter(
+    subj %in% dimnames(a)$subj,
+    session == "baseline"
+  )
+
+m.cuedts0.er <- glmer(
+  1-acc ~ trial.type + (trial.type | subj),
+  cuedts.er,
+  family = "binomial"
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.cuedts0.er)
+
+stern.er <- stern %>% filter(
+  subj %in% dimnames(a)$subj,
+  session == "baseline", load01 == "LL5", trial.type %in% c("RN", "NN")
+)
+
+m.stern0.er <- glmer(
+  1-acc ~ trial.type + (trial.type | subj),
+  stern.er,
+  family = "binomial"
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.stern0.er)
+
+stroop.er <- stroop %>% filter(
+    subj %in% dimnames(a)$subj,
+    pc == "bias",
+    session == "baseline"
+)
+
+m.stroop0.er <- glmer(
+  1-acc ~ trial.type + (trial.type | subj),
+  stroop.er,
+  family = "binomial"
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.stroop0.er)
+
+# mod <- m.stroop0.er
+
+get.error.rate <- function(mod, newname) {
+  
+  d <- data.frame(
+      subj = rownames(coef(mod)$subj),
+      er.logit.stroop = coef(mod)$subj[, 2],  ## extract logits
+      er.logit.congr  = coef(mod)$subj[, 1]
+    ) %>%
+      mutate(
+    er.logit.incon = er.logit.stroop + er.logit.congr,  ## logit of error on incon trials
+    ##  blup stroop effect in units percent error:
+    stroop.er = (logit2prob(er.logit.incon) - logit2prob(er.logit.congr)) * 100
+  ) %>%
+  dplyr::select(subj, er = stroop.er)
+  
+  d[, 2]
+
+}
+
+logit2prob <- function(x) exp(x) / (1 + exp(x))
+
+
+er <- data.frame(
+  Axcpt  = get.error.rate(m.axcpt0.er),
+  Cuedts = get.error.rate(m.cuedts0.er),
+  Stern  = get.error.rate(m.stern0.er),
+  Stroop = get.error.rate(m.stroop0.er)
+)
+
+cor(er)
+
+```
+
+
+```{r}
+
+
+## behavioral summary measure
+# correct completion rate (CCR) for the low control condition as:  (#correct-trials) / ([mean-correctRT*#correct-trials] + [mean-errorRT * #error-trials]). 
+# CCR incongruent / CCR congruent
+
+
+beh <- scale(scale(er) + scale(rt))
+
+cor(rt)
+cor(er)
+cor(beh)
+
+
+```
+
+
+
+```{r}
+
+scores <- pca %>% map(~ .$rotation[, 1]) %>% bind_cols %>% as.data.frame
+
+lapply(tasks, function(x) plot(scores[, x], beh[, x]))
+lapply(tasks, function(x) plot(scores[, x], rt[, x]))
+
+lapply(tasks, function(x) cor(scores[, x], rt[, x]))
+lapply(tasks, function(x) cor(scores[, x], beh[, x]))
+
+
+```
+
+
+# supervised
+
+
+```{r}
+
+X_axcpt <- t(bs[, "Axcpt", ])
+
+library(glmnet)
+
+fit_axcpt <- cv.glmnet(
+  scale(X_axcpt),
+  rt$Axcpt,
+  alpha = 0, 
+  standardize = FALSE
+)
+
+plot(fit_axcpt)
+
+cor(
+  rt$Axcpt,
+  as.numeric(cbind(1, scale(X_axcpt)) %*% coef(fit_axcpt, s = "lambda.min"))
+)
+
+
+X_cuedts <- t(bs[, "Cuedts", ])
+fit_cuedts <- cv.glmnet(
+  scale(X_cuedts),
+  rt$Cuedts,
+  alpha = 0, 
+  standardize = FALSE
+)
+
+plot(fit_cuedts)
+
+cor(
+  rt$Cuedts,
+  as.numeric(cbind(1, scale(X_cuedts)) %*% coef(fit_cuedts, s = "lambda.min"))
+)
+
+
+
+
+X_stern <- t(bs[, "Stern", ])
+fit_stern <- cv.glmnet(
+  scale(X_stern),
+  rt$Stern,
+  alpha = 0, 
+  standardize = FALSE
+)
+
+plot(fit_stern)
+
+cor(
+  rt$Stern,
+  as.numeric(cbind(1, scale(X_stern)) %*% coef(fit_stern, s = "lambda.min"))
+)
+
+
+
+
+X_stroop <- t(bs[, "Stroop", ])
+fit_stroop <- cv.glmnet(
+  scale(X_stroop),
+  rt$Stroop,
+  alpha = 0, 
+  standardize = FALSE
+)
+
+plot(fit_stroop)
+
+cor(
+  rt$Stroop,
+  as.numeric(cbind(1, scale(X_stroop)) %*% coef(fit_stroop, s = "lambda.min"))
+)
+
+
+
+## cross-task
+
+## CTS:
+cor(
+  predict(fit_cuedts, newx = scale(X_axcpt), s = "lambda.min"),
+  rt$Axcpt
+)
+
+cor(
+  predict(fit_cuedts, newx = scale(X_stern), s = "lambda.min"),
+  rt$Stern
+)
+
+cor(
+  predict(fit_cuedts, newx = scale(X_stroop), s = "lambda.min"),
+  rt$Stroop
+)
+
+
+
+## Stern
+
+cor(
+  predict(fit_stern, newx = scale(X_cuedts), s = "lambda.min"),
+  rt$Cuedts
+)
+
+cor(
+  predict(fit_stern, newx = scale(X_axcpt), s = "lambda.min"),
+  rt$Axcpt
+)
+
+cor(
+  predict(fit_stern, newx = scale(X_stroop), s = "lambda.min"),
+  rt$Stroop
+)
+
+
+## stroop
+
+
+cor(
+  predict(fit_stroop, newx = scale(X_cuedts), s = "lambda.min"),
+  rt$Cuedts
+)
+
+cor(
+  predict(fit_stroop, newx = scale(X_axcpt), s = "lambda.min"),
+  rt$Axcpt
+)
+
+cor(
+  predict(fit_stroop, newx = scale(X_stern), s = "lambda.min"),
+  rt$Stern
+)
+
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+
+
+axcpt.rt <- axcpt %>% filter(
+  subj %in% dimnames(a)$subj, trialacc == 1, !is.na(target.rt), target.rt > 0,
+  session == "proactive", trial.type %in% c("BX", "BY")
+  ) %>%
+  mutate(trial.type = relevel(as.factor(trial.type), "BY"))
+cuedts.rt <- cuedts %>% filter(
+    subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+    session == "proactive"
+  )
+stern.rt <- stern %>% filter(
+  subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+  session == "proactive", load01 == "LL5", trial.type %in% c("RN", "NN")
+)
+stroop.rt <- stroop %>% filter(
+    subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+    pc == "bias",
+    session == "proactive"
+)
+
+include <- Reduce(
+  intersect,
+  list(axcpt.rt$subj, cuedts.rt$subj, stern.rt$subj, stroop.rt$subj)
+)
+length(include)
+
+
+
+
+m.axcpt0 <- lmer(
+  target.rt ~ trial.type + (trial.type | subj),
+  axcpt.rt %>% filter(subj %in% include)
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.axcpt0)
+
+
+
+m.cuedts0 <- lmer(
+  rt ~ trial.type + (trial.type | subj),
+  cuedts.rt %>% filter(subj %in% include)
+  # control = lmerControl(optimizer = "bobyqa")
+)
+
+summary(m.cuedts0)
+
+
+m.stern0 <- lmer(
+  rt ~ trial.type + (trial.type | subj),
+  stern.rt %>% filter(subj %in% include)
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.stern0)
+
+
+m.stroop0 <- lmer(
+  rt ~ trial.type + (trial.type | subj),
+  stroop.rt %>% filter(subj %in% include),
+  control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.stroop0)
+
+rt <- data.frame(
+  Axcpt = coef(m.axcpt0)$subj[, 2],
+  Cuedts = coef(m.cuedts0)$subj[, 2],
+  Stern = coef(m.stern0)$subj[, 2],
+  Stroop = coef(m.stroop0)$subj[, 2]
+)
+
+cor(rt)
+
+
+## cross session, w/in task
+
+ps <- a[, , , "proactive"] %>% apply(c("task", "subj"), function(x) x)
+X_axcpt_pro <- t(bs[, "Axcpt", include])
+X_cuedts_pro <- t(bs[, "Cuedts", include])
+X_stern_pro <- t(bs[, "Stern", include])
+X_stroop_pro <- t(bs[, "Stroop", include])
+
+cor(
+  predict(fit_stroop, newx = scale(X_stroop_pro), s = "lambda.min"),
+  rt$Stroop
+)
+
+cor(
+  predict(fit_axcpt, newx = scale(X_axcpt_pro), s = "lambda.min"),
+  rt$Axcpt
+)
+
+cor(
+  predict(fit_cuedts, newx = scale(X_cuedts_pro), s = "lambda.min"),
+  rt$Cuedts
+)
+
+cor(
+  predict(fit_stern, newx = scale(X_stern_pro), s = "lambda.min"),
+  rt$Stern
+)
+
+
+
+
+```
+
+
+
+
+```{r}
+
+
+axcpt.rt <- axcpt %>% filter(
+  subj %in% dimnames(a)$subj, trialacc == 1, !is.na(target.rt), target.rt > 0,
+  session == "reactive", trial.type %in% c("BX", "BY")
+  ) %>%
+  mutate(trial.type = relevel(as.factor(trial.type), "BY"))
+cuedts.rt <- cuedts %>% filter(
+    subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+    session == "reactive"
+  )
+stern.rt <- stern %>% filter(
+  subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+  session == "reactive", load01 == "LL5", trial.type %in% c("RN", "NN")
+)
+stroop.rt <- stroop %>% filter(
+    subj %in% dimnames(a)$subj, acc == 1, !is.na(rt), rt > 0,
+    pc == "bias",
+    session == "reactive"
+)
+
+include <- Reduce(
+  intersect,
+  list(axcpt.rt$subj, cuedts.rt$subj, stern.rt$subj, stroop.rt$subj)
+)
+length(include)
+
+
+
+
+m.axcpt0 <- lmer(
+  target.rt ~ trial.type + (trial.type | subj),
+  axcpt.rt %>% filter(subj %in% include)
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.axcpt0)
+
+
+
+m.cuedts0 <- lmer(
+  rt ~ trial.type + (trial.type | subj),
+  cuedts.rt %>% filter(subj %in% include)
+  # control = lmerControl(optimizer = "bobyqa")
+)
+
+summary(m.cuedts0)
+
+
+m.stern0 <- lmer(
+  rt ~ trial.type + (trial.type | subj),
+  stern.rt %>% filter(subj %in% include)
+  # control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.stern0)
+
+
+m.stroop0 <- lmer(
+  rt ~ trial.type + (trial.type | subj),
+  stroop.rt %>% filter(subj %in% include),
+  control = lmerControl(optimizer = "bobyqa")
+)
+summary(m.stroop0)
+
+rt <- data.frame(
+  Axcpt = coef(m.axcpt0)$subj[, 2],
+  Cuedts = coef(m.cuedts0)$subj[, 2],
+  Stern = coef(m.stern0)$subj[, 2],
+  Stroop = coef(m.stroop0)$subj[, 2]
+)
+
+cor(rt)
+
+
+## cross session, w/in task
+
+ps <- a[, , , "reactive"] %>% apply(c("task", "subj"), function(x) x)
+X_axcpt_pro <- t(bs[, "Axcpt", include])
+X_cuedts_pro <- t(bs[, "Cuedts", include])
+X_stern_pro <- t(bs[, "Stern", include])
+X_stroop_pro <- t(bs[, "Stroop", include])
+
+cor(
+  predict(fit_stroop, newx = scale(X_stroop_pro), s = "lambda.min"),
+  rt$Stroop
+)
+
+cor(
+  predict(fit_axcpt, newx = scale(X_axcpt_pro), s = "lambda.min"),
+  rt$Axcpt
+)
+
+cor(
+  predict(fit_cuedts, newx = scale(X_cuedts_pro), s = "lambda.min"),
+  rt$Cuedts
+)
+
+cor(
+  predict(fit_stern, newx = scale(X_stern_pro), s = "lambda.min"),
+  rt$Stern
+)
+
+
+
+
+```
+

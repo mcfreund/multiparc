@@ -15,7 +15,7 @@ output:
 ```{r setup, include = FALSE}
 
 knitr::opts_chunk$set(
-  fig.align = 'center', fig.width = 11.5, fig.fullwidth = TRUE, cache = TRUE
+  fig.align = 'center', fig.fullwidth = TRUE, cache = TRUE
 )
 
 source(here::here("code", "_packages.R"))
@@ -24,18 +24,929 @@ source(here("code", "_vars.R"))
 source(here("code", "_atlases.R"))
 source(here("code", "_settings.R"))
 
-# behav <- fread(here("in", "behavior-and-events_group201902.csv"))
-cl1 <- lmeControl(maxIter = 1E5, msMaxIter = 1E5, niterEM = 1E5, msMaxEval = 1E5)
-
 ```
 
-# Axcpt
 
-## group-level
+# about
+
+* list for each task*session for subjs or trials to exclude
+* estimate behavioral effects
+
+
+# My notes from basecamp thread
+
+* 161832 is one i've excluded from my analyses. high error rates in stroop (>10%, many omissions) in Bas and Pro, and in other tasks.
+* DMCC3128324 axcpt 2nd run ~40% errors. would be one to check if they were indeed responding (or were asleep), motion levels, etc.
+* 203418: 80% of the responses were incorrect in AXCPT. guessing this is a response-mapping issue (i.e., they got the buttons mixed up). if it were up to me i'd exclude bc it's hard to verify what instructions they were following (and on which trials).
+* 448347: generally high error rate; would be one to check whether they seem to be sleeping (they may just be bad at the tasks).
+* 580650: axcpt run 2, 16% of frames censored (FD>0.9)
+* DMCC1328342: stroop run 1, 10% frames censored, mean(FD) = 0.6
+* 849971: cluster of stroop RTs that look like they may be due to that audio signal artifact. (right around 500 ms, very low variance, clear deviance in QQ plot). not suggesting tossing this subj, but just excluding those RT measurements.
+* DMCC8260571
+
+
+# complete cases (subjects)
 
 ```{r}
 
-axcpt %>% filter
+a <- readRDS(here("out", "roistats_hilo_target_2trpk_unshifted.RDS"))
+is.missing.fmri <- apply(a, 1, function(x) any(is.na(x)))
+subjs.missing.fmri <- names(is.missing.fmri)[is.missing.fmri]
+
+is.complete.behav <- 
+  rowSums(with(axcpt, table(subj, session)) > 0) > 2 &
+  rowSums(with(cuedts, table(subj, session)) > 0) > 2 &
+  rowSums(with(stern, table(subj, session)) > 0) > 2 &
+  rowSums(with(stroop, table(subj, session)) > 0) > 2
+subjs.missing.behav <- names(is.complete.behav)[!is.complete.behav]
+
+subjs.missing <- union(subjs.missing.fmri, subjs.missing.behav)
+
+subjs.missing
+length(subjs.missing)
+
+subjs.complete <- setdiff(subjs, subjs.missing)
+subjs.complete
+length(subjs.complete)
 
 ```
+
+
+
+# errors
+
+```{r}
+
+axcpt.er <- axcpt %>% filter(!subj %in% names(is.missing.fmri)[is.missing.fmri])
+
+axcpt.er %>%
+  
+  group_by(subj, session) %>%
+
+  mutate(
+    cue.o = as.numeric(is.na(cue.resp)),
+    cue.c = ifelse(is.na(cue.resp), 0, 1 - acc),
+    target.o = ifelse(is.na(target.cresp), 0, as.numeric(is.na(target.resp))),
+    target.c = ifelse(is.na(target.resp), 0, 1 - acc)
+    ) %>%
+  
+  summarize(across(c("cue.o", "cue.c", "target.o", "target.c"), mean)) %>%
+  
+  reshape2::melt() %>%
+  ggplot(aes(subj, value, fill = variable)) +
+  
+  geom_col(position = position_dodge(width = 0.5), width = 0.5) +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "axcpt")
+
+
+
+
+
+cuedts.er <- cuedts %>% filter(!subj %in% names(is.missing.fmri)[is.missing.fmri])
+
+cuedts.er %>%
+  
+  group_by(subj, session) %>%
+  
+  mutate(
+    er.o = as.numeric(is.na(resp)),
+    er.c = ifelse(is.na(resp), 0, 1 - acc)
+    ) %>%
+  
+  summarize(across(c("er.o", "er.c"), mean)) %>%
+  
+  reshape2::melt() %>%
+  ggplot(aes(subj, value, fill = variable)) +
+  
+  geom_col(position = position_dodge(width = 0.5), width = 0.5) +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "cuedts")
+
+
+
+
+
+stern.er <- stern %>% filter(!subj %in% names(is.missing.fmri)[is.missing.fmri])
+
+stern.er %>%
+  
+  group_by(subj, session) %>%
+  
+  mutate(
+    er.o = as.numeric(is.na(resp)),
+    er.c = ifelse(is.na(resp), 0, 1 - acc)
+    ) %>%
+  
+  summarize(across(c("er.o", "er.c"), mean)) %>%
+  
+  reshape2::melt() %>%
+  ggplot(aes(subj, value, fill = variable)) +
+  
+  geom_col(position = position_dodge(width = 0.5), width = 0.5) +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "stern")
+
+
+
+
+stroop.er <- stroop %>% filter(!subj %in% names(is.missing.fmri)[is.missing.fmri], acc.final != "unintelligible")
+
+stroop.er %>%
+  
+  group_by(subj, session) %>%
+  
+  mutate(
+    er.o = as.numeric(acc.final == "no.response"),
+    er.c = ifelse(as.numeric(acc.final == "no.response"), 0, 1 - acc)
+    ) %>%
+  
+  summarize(across(c("er.o", "er.c"), mean)) %>%
+  
+  reshape2::melt() %>%
+  ggplot(aes(subj, value, fill = variable)) +
+  
+  geom_col(position = position_dodge(width = 0.5), width = 0.5) +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "stroop")
+
+
+```
+
+* 197449 has over 60 percent response omission in Axcpt baseline, on both the cue response and probe response. Their response omission in baseline is also the highest among all subjs all sessions for Stroop and Cuedts (>0.3 for cts, >0.15 for stroop).
+* 203418 "flipped" response mappings in Axcpt baseline
+* 160830 quite high Stroop reactive omission (>0.15)
+
+```{r}
+
+axcpt[subj == 203418 & session == "baseline", c("cue.acc", "target.acc", "trialacc")] <-
+  1 - axcpt[subj == 203418 & session == "baseline", c("cue.acc", "target.acc", "trialacc")]
+
+axcpt.er <- axcpt %>% filter(!subj %in% names(is.missing.fmri)[is.missing.fmri])
+
+
+```
+
+
+
+## summary stats
+
+```{r}
+
+axcpt.er.sum <- axcpt.er %>%
+  
+  filter(trial.type %in% c("BX", "BY")) %>%
+  
+  group_by(subj, session, trial.type) %>%
+  summarize(er = mean(1 - target.acc)) %>%
+  
+  pivot_wider(names_from = "trial.type", values_from = "er") %>%
+  rename(hi = BX, lo = BY) %>%
+  mutate(hilo = hi - lo)
+
+cuedts.er.sum <- cuedts.er %>%
+  
+  filter(incentive == "Inc") %>%
+  
+  group_by(subj, session, trial.type) %>%
+  summarize(er = mean(1 - acc)) %>%
+  
+  pivot_wider(names_from = "trial.type", values_from = "er") %>%
+  rename(hi = InCon, lo = Con) %>%
+  mutate(hilo = hi - lo)
+
+stern.er.sum <- stern.er %>%
+  
+  filter(load01.trial.type %in% c("LL5RN", "LL5NN")) %>%
+  
+  group_by(subj, session, trial.type) %>%
+  summarize(er = mean(1 - acc)) %>%
+  
+  pivot_wider(names_from = "trial.type", values_from = "er") %>%
+  rename(hi = RN, lo = NN) %>%
+  mutate(hilo = hi - lo)
+
+stroop.er.sum <- stroop.er %>%
+  
+  filter(pc == "bias") %>%
+  
+  group_by(subj, session, trial.type) %>%
+  summarize(er = mean(1 - acc)) %>%
+  
+  pivot_wider(names_from = "trial.type", values_from = "er") %>%
+  rename(hi = InCon, lo = Con) %>%
+  mutate(hilo = hi - lo)
+
+
+```
+
+
+
+
+# RT
+
+## initial models
+
+
+```{r}
+
+
+## axcpt
+
+axcpt.rt <- axcpt %>% 
+  filter(
+    !subj %in% names(is.missing.fmri)[is.missing.fmri], 
+    trialacc == 1, target.rt > 0, cue.rt > 0
+    )
+
+axcpt.rt %>%
+  
+  group_by(subj, session) %>%
+
+  select(session, subj, target.rt, cue.rt) %>%
+  reshape2::melt() %>%
+  
+  ggplot(aes(subj, value, fill = variable)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5) +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "axcpt raw, all trials")
+
+
+axcpt.rt.hilo <- axcpt.rt %>% filter(trial.type %in% c("BX", "BY"))
+
+m.axcpt.rt0 <- lmer(
+  target.rt ~ 0 + interaction(trial.type, session) + (0 + interaction(trial.type, session) | subj), 
+  axcpt.rt.hilo,
+  control = lmerControl(optimizer = "bobyqa")
+)
+axcpt.rt.hilo$resid <- resid(m.axcpt.rt0)
+axcpt.rt.hilo$is.farout <- farout(axcpt.rt.hilo$resid)
+
+sum(axcpt.rt.hilo$is.farout)
+sum(axcpt.rt.hilo$is.farout) / nrow(axcpt.rt.hilo)
+
+axcpt.rt.hilo %>%
+  
+  group_by(subj, session) %>%
+
+  select(session, subj, resid) %>%
+  ggplot(aes(subj, resid)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5, fill = "grey40") +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "axcpt resid, BXBY")
+
+axcpt.rt.hilo %>%
+  
+  group_by(subj, session) %>%
+  
+  filter(!is.farout) %>%
+  select(session, subj, target.rt) %>%
+  ggplot(aes(subj, target.rt)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5, fill = "grey40") +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "axcpt raw, bxby, no farout")
+
+## cuedts
+
+cuedts.rt <- cuedts %>% 
+  filter(
+    !subj %in% names(is.missing.fmri)[is.missing.fmri], 
+    acc == 1, rt > 0
+    )
+
+cuedts.rt %>%
+  
+  group_by(subj, session) %>%
+
+  ggplot(aes(subj, rt)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5, fill = "grey40") +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "cuedts raw, all trials")
+
+cuedts.rt.hilo <- cuedts.rt %>% filter(incentive == "Inc")
+
+m.cuedts.rt0 <- lmer(
+  rt ~ 0 + interaction(trial.type, session) + (0 + interaction(trial.type, session) | subj), 
+  cuedts.rt.hilo,
+  control = lmerControl(optimizer = "bobyqa")
+)
+cuedts.rt.hilo$resid <- resid(m.cuedts.rt0)
+cuedts.rt.hilo$is.farout <- farout(cuedts.rt.hilo$resid)
+
+sum(cuedts.rt.hilo$is.farout)
+sum(cuedts.rt.hilo$is.farout) / nrow(cuedts.rt.hilo)
+
+cuedts.rt.hilo %>%
+
+  group_by(subj, session) %>%
+  
+  filter(!is.farout) %>%
+  select(session, subj, rt) %>%
+  ggplot(aes(subj, rt)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5, fill = "grey40") +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "cuedts raw, incentive, no farout")
+
+
+
+
+
+## stern
+
+stern.rt <- stern %>% 
+  filter(
+    !subj %in% names(is.missing.fmri)[is.missing.fmri], 
+    acc == 1, rt > 0
+    )
+
+stern.rt %>%
+  
+  group_by(subj, session) %>%
+
+  ggplot(aes(subj, rt)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5, fill = "grey40") +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "stern raw, all trials")
+
+stern.rt.hilo <- stern.rt %>% filter(load01.trial.type %in% c("LL5RN", "LL5NN"))
+
+m.stern.rt0 <- lmer(
+  rt ~ 0 + interaction(trial.type, session) + (0 + interaction(trial.type, session) | subj), 
+  stern.rt.hilo,
+  control = lmerControl(optimizer = "bobyqa")
+)
+stern.rt.hilo$resid <- resid(m.stern.rt0)
+stern.rt.hilo$is.farout <- farout(stern.rt.hilo$resid)
+
+sum(stern.rt.hilo$is.farout)
+sum(stern.rt.hilo$is.farout) / nrow(stern.rt.hilo)
+
+stern.rt.hilo %>%
+  
+  group_by(subj, session) %>%
+
+  select(session, subj, resid) %>%
+  ggplot(aes(subj, resid)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5, fill = "grey40") +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "stern resid, ll5")
+
+stern.rt.hilo %>%
+  
+  group_by(subj, session) %>%
+  
+  filter(!is.farout) %>%
+  select(session, subj, rt) %>%
+  ggplot(aes(subj, rt)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5, fill = "grey40") +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "stern raw, ll5, no farout")
+
+
+
+
+
+## stroop
+
+stroop.rt <- stroop %>% 
+  filter(
+    !subj %in% names(is.missing.fmri)[is.missing.fmri], 
+    acc == 1, rt > 0, !is.na(rt)
+    )
+
+stroop.rt %>%
+  
+  group_by(subj, session) %>%
+
+  ggplot(aes(subj, rt)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5, fill = "grey40") +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "stroop raw, all trials")
+
+stroop.rt.hilo <- stroop.rt %>% filter(pc == "bias")
+
+m.stroop.rt0 <- lmer(
+  rt ~ 0 + interaction(trial.type, session) + (0 + interaction(trial.type, session) | subj), 
+  stroop.rt.hilo,
+  control = lmerControl(optimizer = "bobyqa")
+)
+stroop.rt.hilo$resid <- resid(m.stroop.rt0)
+stroop.rt.hilo$is.farout <- farout(stroop.rt.hilo$resid)
+
+sum(stroop.rt.hilo$is.farout)
+sum(stroop.rt.hilo$is.farout) / nrow(stroop.rt.hilo)
+
+stroop.rt.hilo %>%
+  
+  group_by(subj, session) %>%
+
+  select(session, subj, resid) %>%
+  ggplot(aes(subj, resid)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5, fill = "grey40") +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "stroop resid, bias")
+
+stroop.rt.hilo %>%
+  
+  group_by(subj, session) %>%
+  
+  filter(!is.farout) %>%
+  select(session, subj, rt) %>%
+  ggplot(aes(subj, rt)) +
+  
+  geom_boxplot(position = position_dodge(width = 0.5), width = 0.5, fill = "grey40") +
+  facet_grid(vars(session)) +
+  
+  scale_fill_brewer(type = "qual", palette = 2) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "stroop raw, bias, no farout")
+
+
+
+```
+
+## models on trimmed data
+
+```{r}
+
+m.axcpt.rt1  <- update(m.axcpt.rt0, data = axcpt.rt.hilo[is.farout == FALSE])
+m.cuedts.rt1 <- update(m.cuedts.rt0, data = cuedts.rt.hilo[is.farout == FALSE])
+m.stern.rt1  <- update(m.stern.rt0, data = stern.rt.hilo[is.farout == FALSE])
+m.stroop.rt1 <- update(m.stroop.rt0, data = stroop.rt.hilo[is.farout == FALSE])
+
+lapply(
+  list(Axcpt = m.axcpt.rt1, Cuedts = m.cuedts.rt1, Stern = m.stern.rt1, Stroop = m.stroop.rt1),
+  summary
+)
+
+# lapply(
+#   list(Axcpt = m.axcpt.rt1, Cuedts = m.cuedts.rt1, Stern = m.stern.rt1, Stroop = m.stroop.rt1),
+#   function(x) coef(x)$subj
+# )
+
+```
+
+
+## summary stats
+
+```{r}
+
+axcpt.rt.sum <- axcpt.rt.hilo[is.farout == FALSE] %>%
+  
+  group_by(subj, session, trial.type) %>%
+  summarize(rt = mean(target.rt)) %>%
+  
+  pivot_wider(names_from = "trial.type", values_from = "rt") %>%
+  rename(hi = BX, lo = BY) %>%
+  mutate(hilo = hi - lo)
+
+cuedts.rt.sum <- cuedts.rt.hilo[is.farout == FALSE] %>%
+  
+  group_by(subj, session, trial.type) %>%
+  summarize(rt = mean(rt)) %>%
+  
+  pivot_wider(names_from = "trial.type", values_from = "rt") %>%
+  rename(hi = InCon, lo = Con) %>%
+  mutate(hilo = hi - lo)
+
+stern.rt.sum <- stern.rt.hilo[is.farout == FALSE] %>%
+  
+  group_by(subj, session, trial.type) %>%
+  summarize(rt = mean(rt)) %>%
+  
+  pivot_wider(names_from = "trial.type", values_from = "rt") %>%
+  rename(hi = RN, lo = NN) %>%
+  mutate(hilo = hi - lo)
+
+
+stroop.rt.sum <- stroop.rt.hilo[is.farout == FALSE] %>%
+  
+  group_by(subj, session, trial.type) %>%
+  summarize(rt = mean(rt)) %>%
+  
+  pivot_wider(names_from = "trial.type", values_from = "rt") %>%
+  rename(hi = InCon, lo = Con) %>%
+  mutate(hilo = hi - lo)
+
+
+```
+
+# cross-task correlations
+
+
+
+## summary stats
+
+* numbers on upper triangle are rank correlation
+
+
+### RT
+
+```{r fig.width = 7}
+
+## focus only on complete cases
+
+axcpt.rt.sum  %<>% filter(subj %in% subjs.complete)
+cuedts.rt.sum %<>% filter(subj %in% subjs.complete)
+stern.rt.sum  %<>% filter(subj %in% subjs.complete)
+stroop.rt.sum %<>% filter(subj %in% subjs.complete)
+
+axcpt.rt.sum.w <- axcpt.rt.sum %>% select(-lo, -hi) %>% pivot_wider(names_from = "session", values_from = "hilo")
+cuedts.rt.sum.w <- cuedts.rt.sum %>% select(-lo, -hi) %>% pivot_wider(names_from = "session", values_from = "hilo")
+stern.rt.sum.w <- stern.rt.sum %>% select(-lo, -hi) %>% pivot_wider(names_from = "session", values_from = "hilo")
+stroop.rt.sum.w <- stroop.rt.sum %>% select(-lo, -hi) %>% pivot_wider(names_from = "session", values_from = "hilo")
+
+
+## baseline
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- cor(x, y, use = "complete.obs", method = "spearman")
+    txt <- format(c(r, 0.123456789), digits = digits)[1]
+    txt <- paste0(prefix, txt)
+    if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+    text(0.5, 0.5, txt, cex = cex.cor * abs(r))
+}
+panel.hist <- function(x, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(usr[1:2], 0, 1.5) )
+    h <- hist(x, plot = FALSE)
+    breaks <- h$breaks; nB <- length(breaks)
+    y <- h$counts; y <- y/max(y)
+    rect(breaks[-nB], 0, breaks[-1], y, col = "cyan", ...)
+}
+
+
+pairs(
+  cbind(
+    Axcpt = axcpt.rt.sum.w$baseline, Cuedts = cuedts.rt.sum.w$baseline, 
+    Stern = stern.rt.sum.w$baseline, Stroop = stroop.rt.sum.w$baseline
+    ),
+  pch = 16,
+  upper.panel = panel.cor,
+  diag.panel = panel.hist,
+  main = "baseline"
+)
+
+## proactive
+
+pairs(
+  cbind(
+    Axcpt = axcpt.rt.sum.w$proactive, Cuedts = cuedts.rt.sum.w$proactive, 
+    Stern = stern.rt.sum.w$proactive, Stroop = stroop.rt.sum.w$proactive
+    ),
+  pch = 16,
+  upper.panel = panel.cor,
+  diag.panel = panel.hist,
+  main = "proactive"
+)
+
+## reactive
+
+pairs(
+  cbind(
+    Axcpt = axcpt.rt.sum.w$reactive, Cuedts = cuedts.rt.sum.w$reactive, 
+    Stern = stern.rt.sum.w$reactive, Stroop = stroop.rt.sum.w$reactive
+    ),
+  pch = 16,
+  upper.panel = panel.cor,
+  diag.panel = panel.hist,
+  main = "reactive"
+)
+
+
+```
+
+
+
+### error
+
+```{r, fig.width = 7}
+
+## focus only on complete cases
+
+axcpt.er.sum  %<>% filter(subj %in% subjs.complete)
+cuedts.er.sum %<>% filter(subj %in% subjs.complete)
+stern.er.sum  %<>% filter(subj %in% subjs.complete)
+stroop.er.sum %<>% filter(subj %in% subjs.complete)
+
+axcpt.er.sum.w <- axcpt.er.sum %>% select(-lo, -hi) %>% pivot_wider(names_from = "session", values_from = "hilo")
+cuedts.er.sum.w <- cuedts.er.sum %>% select(-lo, -hi) %>% pivot_wider(names_from = "session", values_from = "hilo")
+stern.er.sum.w <- stern.er.sum %>% select(-lo, -hi) %>% pivot_wider(names_from = "session", values_from = "hilo")
+stroop.er.sum.w <- stroop.er.sum %>% select(-lo, -hi) %>% pivot_wider(names_from = "session", values_from = "hilo")
+
+
+## baseline
+
+pairs(
+  cbind(
+    Axcpt = axcpt.er.sum.w$baseline, Cuedts = cuedts.er.sum.w$baseline, 
+    Stern = stern.er.sum.w$baseline, Stroop = stroop.er.sum.w$baseline
+    ),
+  pch = 16,
+  upper.panel = panel.cor,
+  diag.panel = panel.hist,
+  main = "baseline"
+)
+
+## proactive
+
+pairs(
+  cbind(
+    Axcpt = axcpt.er.sum.w$proactive, Cuedts = cuedts.er.sum.w$proactive, 
+    Stern = stern.er.sum.w$proactive, Stroop = stroop.er.sum.w$proactive
+    ),
+  pch = 16,
+  upper.panel = panel.cor,
+  diag.panel = panel.hist,
+  main = "proactive"
+
+)
+
+## reactive
+
+pairs(
+  cbind(
+    Axcpt = axcpt.er.sum.w$reactive, Cuedts = cuedts.er.sum.w$reactive, 
+    Stern = stern.er.sum.w$reactive, Stroop = stroop.er.sum.w$reactive
+    ),
+  pch = 16,
+  upper.panel = panel.cor,
+  diag.panel = panel.hist,
+  main = "reactive"
+
+)
+
+
+
+```
+
+## combined 
+
+```{r}
+
+
+axcpt.comp.sum.w <- full_join(
+  axcpt.rt.sum %>% transmute(hilo.rt = hi/lo),
+  axcpt.er.sum %>% transmute(hilo.er = (1-hi)/(1-lo))
+  ) %>%
+  transmute(hilo = hilo.rt / hilo.er) %>% 
+  pivot_wider(names_from = "session", values_from = "hilo")
+
+cuedts.comp.sum.w <- full_join(
+  cuedts.rt.sum %>% transmute(hilo.rt = hi/lo),
+  cuedts.er.sum %>% transmute(hilo.er = (1-hi)/(1-lo))
+  ) %>%
+  transmute(hilo = hilo.rt / hilo.er) %>% 
+  pivot_wider(names_from = "session", values_from = "hilo")
+
+stern.comp.sum.w <- full_join(
+  stern.rt.sum %>% transmute(hilo.rt = hi/lo),
+  stern.er.sum %>% transmute(hilo.er = (1-hi)/(1-lo))
+  ) %>%
+  transmute(hilo = hilo.rt / hilo.er) %>% 
+  pivot_wider(names_from = "session", values_from = "hilo")
+
+stroop.comp.sum.w <- full_join(
+  stroop.rt.sum %>% transmute(hilo.rt = hi/lo),
+  stroop.er.sum %>% transmute(hilo.er = (1-hi)/(1-lo))
+  ) %>%
+  transmute(hilo = hilo.rt / hilo.er) %>% 
+  pivot_wider(names_from = "session", values_from = "hilo")
+
+
+pairs(
+  cbind(
+    Axcpt = axcpt.comp.sum.w$baseline, Cuedts = cuedts.comp.sum.w$baseline, 
+    Stern = stern.comp.sum.w$baseline, Stroop = stroop.comp.sum.w$baseline
+    ),
+  pch = 16,
+  upper.panel = panel.cor,
+  diag.panel = panel.hist,
+  main = "baseline"
+)
+
+## proactive
+
+pairs(
+  cbind(
+    Axcpt = axcpt.comp.sum.w$proactive, Cuedts = cuedts.comp.sum.w$proactive, 
+    Stern = stern.comp.sum.w$proactive, Stroop = stroop.comp.sum.w$proactive
+    ),
+  pch = 16,
+  upper.panel = panel.cor,
+  diag.panel = panel.hist,
+  main = "proactive"
+
+)
+
+## reactive
+
+pairs(
+  cbind(
+    Axcpt = axcpt.comp.sum.w$reactive, Cuedts = cuedts.comp.sum.w$reactive, 
+    Stern = stern.comp.sum.w$reactive, Stroop = stroop.comp.sum.w$reactive
+    ),
+  pch = 16,
+  upper.panel = panel.cor,
+  diag.panel = panel.hist,
+  main = "reactive"
+
+)
+
+
+```
+
+
+
+## HLM
+
+### RT
+
+### error
+
+
+# write
+
+```{r}
+
+error.sum <- bind_rows(
+  Axcpt = axcpt.er.sum.w,
+  Cuedts = cuedts.er.sum.w,
+  Stern = stern.er.sum.w,
+  Stroop = stroop.er.sum.w,
+  .id = "task"
+)
+
+rt.sum <- bind_rows(
+  Axcpt = axcpt.rt.sum.w,
+  Cuedts = cuedts.rt.sum.w,
+  Stern = stern.rt.sum.w,
+  Stroop = stroop.rt.sum.w,
+  .id = "task"
+)
+
+
+fwrite(error.sum, here("out", "behav_sumstat_error.csv"))
+fwrite(rt.sum, here("out", "behav_sumstat_rt.csv"))
+
+```
+
+
+
+
+
+
+
+
+<!-- ### error -->
+
+
+
+
+<!-- ```{r} -->
+
+<!-- ## initial models -->
+
+<!-- axcpt.er <- axcpt %>% filter( -->
+<!--   subj %in% dimnames(a)$subj, cue.acc == 1, -->
+<!--   session == "baseline", trial.type %in% c("BX", "BY") -->
+<!-- ) %>% -->
+<!--   mutate(trial.type = relevel(as.factor(trial.type), "BY")) -->
+
+<!-- m.axcpt0.er <- glmer( -->
+<!--   1-target.acc ~ trial.type + (trial.type | subj), -->
+<!--   axcpt.er, -->
+<!--   family = "binomial" -->
+<!--   # control = lmerControl(optimizer = "bobyqa") -->
+<!-- ) -->
+<!-- summary(m.axcpt0.er) -->
+
+<!-- cuedts.er <- cuedts %>% filter( -->
+<!--   subj %in% dimnames(a)$subj, -->
+<!--   session == "baseline" -->
+<!-- ) -->
+
+<!-- m.cuedts0.er <- glmer( -->
+<!--   1-acc ~ trial.type + (trial.type | subj), -->
+<!--   cuedts.er, -->
+<!--   family = "binomial" -->
+<!--   # control = lmerControl(optimizer = "bobyqa") -->
+<!-- ) -->
+<!-- summary(m.cuedts0.er) -->
+
+<!-- stern.er <- stern %>% filter( -->
+<!--   subj %in% dimnames(a)$subj, -->
+<!--   session == "baseline", load01 == "LL5", trial.type %in% c("RN", "NN") -->
+<!-- ) -->
+
+<!-- m.stern0.er <- glmer( -->
+<!--   1-acc ~ trial.type + (trial.type | subj), -->
+<!--   stern.er, -->
+<!--   family = "binomial" -->
+<!--   # control = lmerControl(optimizer = "bobyqa") -->
+<!-- ) -->
+<!-- summary(m.stern0.er) -->
+
+<!-- stroop.er <- stroop %>% filter( -->
+<!--   subj %in% dimnames(a)$subj, -->
+<!--   pc == "bias", -->
+<!--   session == "baseline" -->
+<!-- ) -->
+
+<!-- m.stroop0.er <- glmer( -->
+<!--   1-acc ~ trial.type + (trial.type | subj), -->
+<!--   stroop.er, -->
+<!--   family = "binomial" -->
+<!--   # control = lmerControl(optimizer = "bobyqa") -->
+<!-- ) -->
+<!-- summary(m.stroop0.er) -->
+
+<!-- # mod <- m.stroop0.er -->
+
+<!-- get.error.rate <- function(mod, newname) { -->
+
+<!--   d <- data.frame( -->
+<!--     subj = rownames(coef(mod)$subj), -->
+<!--     er.logit.stroop = coef(mod)$subj[, 2],  ## extract logits -->
+<!--     er.logit.congr  = coef(mod)$subj[, 1] -->
+<!--   ) %>% -->
+<!--     mutate( -->
+<!--       er.logit.incon = er.logit.stroop + er.logit.congr,  ## logit of error on incon trials -->
+<!--       ##  blup stroop effect in units percent error: -->
+<!--       stroop.er = (logit2prob(er.logit.incon) - logit2prob(er.logit.congr)) * 100 -->
+<!--     ) %>% -->
+<!--     dplyr::select(subj, er = stroop.er) -->
+
+<!--   d[, 2] -->
+
+<!-- } -->
+
+<!-- logit2prob <- function(x) exp(x) / (1 + exp(x)) -->
+
+
+<!-- er <- data.frame( -->
+<!--   Axcpt  = get.error.rate(m.axcpt0.er), -->
+<!--   Cuedts = get.error.rate(m.cuedts0.er), -->
+<!--   Stern  = get.error.rate(m.stern0.er), -->
+<!--   Stroop = get.error.rate(m.stroop0.er) -->
+<!-- ) -->
+
+<!-- cor(er) -->
+
+<!-- ``` -->
 

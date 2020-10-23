@@ -1,0 +1,1145 @@
+---
+title: "supervised brain--behavior analysis"
+author: "michael freund"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    theme: spacelab
+    highlight: zenburn
+---
+  
+  
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(
+  fig.align = 'center', fig.fullwidth = TRUE
+)
+
+source(here::here("code", "_packages.R"))
+source(here("code", "read-behav.R"))
+source(here("code", "_vars.R"))
+source(here("code", "_atlases.R"))
+source(here("code", "_settings.R"))
+source(here("code", "_funs.R"))
+
+er.sum <- fread(here("out", "behav_sumstat_error.csv"))
+rt.sum <- fread(here("out", "behav_sumstat_rt.csv"))
+
+
+a <- readRDS(here("out", "roistats_hilo_target_2trpk_unshifted.RDS"))
+is.missing.fmri <- apply(a, 1, function(x) any(is.na(x)))
+subjs.missing.fmri <- names(is.missing.fmri)[is.missing.fmri]
+
+is.complete.behav <- 
+  rowSums(with(axcpt, table(subj, session)) > 0) > 2 &
+  rowSums(with(cuedts, table(subj, session)) > 0) > 2 &
+  rowSums(with(stern, table(subj, session)) > 0) > 2 &
+  rowSums(with(stroop, table(subj, session)) > 0) > 2
+subjs.missing.behav <- names(is.complete.behav)[!is.complete.behav]
+
+subjs.missing <- union(subjs.missing.fmri, subjs.missing.behav)
+subjs.complete <- sort(setdiff(subjs, c(subjs.missing, "197449")))
+
+a <- a[subjs.complete, , , ]
+
+rt.sum <- rt.sum[subj %in% subjs.complete]
+er.sum <- er.sum[subj %in% subjs.complete]
+
+
+cm.sum <- bind_cols(
+  rt.sum %>% arrange(task, subj) %>% select(task, subj),
+  er.sum %>% group_by(task) %>% mutate(across(where(is.numeric), function(x) c(scale(x)))) %>% arrange(task, subj) %>%
+    .[c("baseline", "proactive", "reactive")] +
+  rt.sum %>% group_by(task) %>% mutate(across(where(is.numeric), function(x) c(scale(x)))) %>% arrange(task, subj) %>%
+    .[c("baseline", "proactive", "reactive")]
+)
+
+```
+
+
+* Subjects: `r length(subjs.complete)` included
+* INCLUDES TWINS
+
+
+Purpose:
+
+* predict behavioral effect of control demand (hi/lo contrast) with multivariate model
+* models use parcel means as explanatory variables, explaining hi/lo behavioral contrast
+* ridge regression used, with 5-fold crossvalidation to tune lambda
+* models fitted to different subsets of predictors: schaefer networks
+
+
+# glance at group-level
+
+* look at mahalanobis distances (from centroid) to ID outliers
+* in MVN, mahalanobis^2 are chi-square distributed with df = number dimensions
+
+```{r fig.width = 7, results = FALSE}
+
+## multivariate outliers?
+
+mahal <- apply(a, c("task", "session"), function(x) mahalanobis(x, center = colMeans(x), cov = cov.shrink(x)))
+mahal %>%
+  reshape2::melt() %>%
+  ggplot(aes(sample = value)) +
+  
+  stat_qq(distribution = qchisq, dparams = list(df = 400)) +
+  stat_qq_line(distribution = qchisq, dparams = list(df = 400)) +
+  facet_grid(vars(task), vars(session)) +
+  
+  labs(title = "mahalanobis^2 against chisq")
+
+
+b.pvals <- apply(
+  a, c("task", "session", "parcel"), function(x) wilcox.test(x, alternative = "greater")$p.value
+  ) %>%
+  apply(c("task", "session"), p.adjust, "fdr") %>% reshape2::melt()
+
+
+b.pvals %>% filter(value < 0.05) %>% with(., table(task, session)) / 4 ## percent of parcels significantly activated
+
+```
+
+
+## profiles
+
+### all parcels
+
+```{r fig.height = 10}
+
+means <- a %>% 
+  apply(c("task", "parcel", "session"), mean) %>% 
+  reshape2::melt()
+means$network <- get.network(means$parcel)
+
+means %>%
+  
+  ggplot(aes(parcel, value, color = task, group = task)) +
+  
+  geom_line(size = 1) +
+  scale_color_brewer(type = "qual", palette = 2) +
+  facet_grid(vars(session)) +
+  
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 3), legend.position = "top") +
+  labs(title = "task profile across parcels", y = "mean beta")
+
+means %>%
+  
+  group_by(task, session) %>%
+  mutate(value = scale(value)) %>%
+  
+  ggplot(aes(parcel, value, color = task, group = task)) +
+  
+  geom_line(size = 1) +
+  scale_color_brewer(type = "qual", palette = 2) +
+  facet_grid(vars(session)) +
+  
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 3), legend.position = "top") +
+  labs(title = "task profile across parcels", y = "mean beta  (z-scored across parcels w/n task)")
+
+
+```
+
+
+
+### FPN, CON, DAN
+
+```{r fig.height = 10}
+
+means %>%
+  
+  filter(network %in% c("Cont", "SalVentAttn", "DorsAttn")) %>%
+  
+  ggplot(aes(parcel, value, color = task, group = task)) +
+  
+  geom_hline(yintercept = 0) +
+  geom_line(size = 1) +
+  
+  scale_color_brewer(type = "qual", palette = 2) +
+  facet_wrap(vars(session, network), nrow = 3, scales = "free_x") +
+  
+  theme(axis.text.x = element_blank(), legend.position = "top") +
+  labs(title = "task profile across parcels | assoc networks", y = "mean beta")
+
+
+
+means %>%
+  
+  filter(network %in% c("Cont", "SalVentAttn", "DorsAttn")) %>%
+  
+  group_by(task, session) %>%
+  mutate(value = scale(value)) %>%
+  
+  ggplot(aes(parcel, value, color = task, group = task)) +
+  
+  geom_line(size = 1) +
+  scale_color_brewer(type = "qual", palette = 2) +
+  facet_wrap(vars(session, network), nrow = 3, scales = "free_x") +
+  
+  theme(axis.text.x = element_blank(), legend.position = "top") +
+  labs(title = "task profile across parcels | assoc networks", y = "mean beta (z-scored across parcels w/n task)")
+
+
+```
+
+
+
+### DMCC34
+
+```{r fig.height = 10}
+
+means %>%
+  
+  filter(parcel %in% parcellation$key[dmcc34]) %>%
+  
+  ggplot(aes(parcel, value, color = task, group = task)) +
+  
+  geom_hline(yintercept = 0) +
+  geom_line(size = 1) +
+  
+  scale_color_brewer(type = "qual", palette = 2) +
+  facet_grid(vars(session)) +
+  
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "task profile across parcels | DMCC34", y = "mean beta")
+
+
+
+means %>%
+  
+  filter(parcel %in% parcellation$key[dmcc34]) %>%
+  
+  group_by(task, session) %>%
+  mutate(value = scale(value)) %>%
+  
+  ggplot(aes(parcel, value, color = task, group = task)) +
+  
+  geom_hline(yintercept = 0) +
+  geom_line(size = 1) +
+  
+  scale_color_brewer(type = "qual", palette = 2) +
+  facet_grid(vars(session)) +
+  
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "top") +
+  labs(title = "task profile across parcels | DMCC34", y = "mean beta (z-scored across parcels w/n task)")
+
+
+```
+
+
+
+
+
+# brain--behavior: across task, within session
+
+## RT
+
+```{r fig.width = 7, fig.height = 3}
+
+## subset training set
+
+cv.task <- function(X, Y) {
+  # X <- a; Y <- rt.sum
+  
+  X <- X %>% apply(c("task", "subj", "session"), function(x) scale(x))
+  X <- aperm(X, c(3, 1, 2, 4))
+  # print(dim(X))
+  
+  res <- setNames(vector("list", length(sessions)), sessions)
+  Y %<>% arrange(task, subj)  ## sort
+  
+  set.seed(0)
+  for (session.i in sessions) {
+    # session.i <- "baseline"
+    
+    Xses <- X[, , , session.i]
+    M <- matrix(NA, ncol = 4, nrow = 4, dimnames = list(train = tasks, test = tasks))
+    
+    for (task.train in tasks) {
+      # task.train = "Axcpt"
+      
+      Y_train <- Y[task %in% task.train]
+      X_train <- Xses[, , task.train]
+      
+      ## make sure in same order:
+      if (!identical(Y_train$subj, dimnames(X_train)$subj)) stop("subjs not aligned train")
+      
+      yhat_train <- rep(NA, length(subjs.complete))
+      yhat_test  <- matrix(
+        NA, ncol = 3, nrow = length(subjs.complete), 
+        dimnames = list(subj = subjs.complete, task = setdiff(tasks, task.train))
+        )
+      
+      # fitcv <- cv.glmnet(X_train, y_train, alpha = 0)  ## for tuning lambda
+      # fit <- glmnet(X_train, y_train, alpha = 0, lambda = fitcv$lambda.min)  ## for generating predictions
+      
+      Xs_train <- scale(X_train)
+      Ys_train <- scale(Y_train[[session.i]])
+      
+      for (subj.test in seq_along(subjs.complete)) {
+        # subj.test = 1
+        
+        # Xs_train <- X_train[-subj.test, ]
+        # ys_train <- Y_train[[session.i]][-subj.test]
+        
+        Xs_train <- X_train[-subj.test, ]
+        ys_train <- Ys_train[-subj.test]
+        # mu <- colMeans(X_train[-subj.test, ])
+        # sdev <- apply(X_train[-subj.test, ], 2, sd)
+        
+        fit <- glmnet(Xs_train, ys_train, alpha = 0, lambda = 5:1)  ## for generating predictions
+        yhat_train[subj.test] <- 
+          c(
+            predict(
+              fit, 
+              newx = X_train[subj.test, , drop = FALSE],
+              #sweep(X_train[subj.test, , drop = FALSE] - mu, 2, sdev, "/"), ## scale newx to training set
+              s = 1
+            )
+          )
+        
+        for (task.i in setdiff(tasks, task.train)) {
+          # task.i = "Cuedts"
+          
+          Y_test <- Y[task %in% task.i]
+          X_test <- scale(Xses[, , task.i])
+          
+          ## make sure in same order:
+          if (!identical(Y_test$subj, dimnames(X_test)$subj)) stop("subjs not aligned test")
+          
+          yhat_test[subj.test, task.i] <- 
+            c(
+              predict(
+                fit, 
+                newx = scale(X_test)[subj.test, , drop = FALSE],
+                #sweep(X_test[subj.test, , drop = FALSE] - mu, 2, sdev, "/"), ## scale newx to training set
+                s = 1
+              )
+            )
+
+        }
+
+      }
+      
+      r_train <- cor(Y_train[task == task.train][[session.i]], yhat_train)
+      r_test <- cor(Y_test[task == task.i][[session.i]], yhat_test)
+      
+      M[task.train, task.train] <- r_train
+      M[task.train, setdiff(tasks, task.train)] <- r_test
+      
+    }
+    
+    if (any(is.na(c(M)))) stop("NA")
+    
+    res[[session.i]] <- M
+      
+  }
+  
+  res
+
+}
+
+
+confusion.task.allparc <- cv.task(a[, !get.network(parcellation$key) %in% "Limbic", , ], rt.sum)
+confusion.task.fpn     <- cv.task(a[, get.network(parcellation$key) == "Cont", , ], rt.sum)
+confusion.task.con     <- cv.task(a[, get.network(parcellation$key) == "SalVentAttn", , ], rt.sum)
+confusion.task.ctrl    <- cv.task(a[, get.network(parcellation$key) %in% c("Cont", "SalVentAttn"), , ], rt.sum)
+confusion.task.dmcc34  <- cv.task(a[, parcellation$key[dmcc34], , ], rt.sum)
+confusion.task.smv     <- cv.task(a[, get.network(parcellation$key) %in% c("SomMot", "Vis"), , ], rt.sum)
+
+
+confusion.task.allparc %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), RT, allparcs", x = "train", y = "test")
+
+
+confusion.task.fpn %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), RT, FPN", x = "train", y = "test")
+
+
+confusion.task.con %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), RT, CON", x = "train", y = "test")
+
+
+confusion.task.ctrl %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), RT, FPN+CON", x = "train", y = "test")
+
+
+confusion.task.dmcc34 %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), RT, DMCC34", x = "train", y = "test")
+
+
+
+
+confusion.task.smv %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), RT, SM+Vis", x = "train", y = "test")
+
+```
+
+
+
+## ER
+
+```{r fig.width = 7, fig.height = 3}
+
+confusion.task.allparc <- cv.task(a[, !get.network(parcellation$key) %in% "Limbic", , ], er.sum)
+confusion.task.fpn <- cv.task(a[, get.network(parcellation$key) == "Cont", , ], er.sum)
+confusion.task.con <- cv.task(a[, get.network(parcellation$key) == "SalVentAttn", , ], er.sum)
+confusion.task.ctrl <- cv.task(a[, get.network(parcellation$key) %in% c("Cont", "SalVentAttn", "DorsAttn"), , ], er.sum)
+confusion.task.dmcc34 <- cv.task(a[, parcellation$key[dmcc34], , ], er.sum)
+confusion.task.smv <- cv.task(a[, get.network(parcellation$key) %in% c("SomMot", "Vis"), , ], er.sum)
+
+
+confusion.task.allparc %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), ER, allparcs", x = "train", y = "test")
+
+
+confusion.task.fpn %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), ER, FPN", x = "train", y = "test")
+
+
+confusion.task.con %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), ER, CON", x = "train", y = "test")
+
+
+confusion.task.ctrl %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+
+  labs(title = "cor(y, yhat), ER, FPN+CON", x = "train", y = "test")
+
+
+confusion.task.dmcc34 %>%
+    
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+
+  labs(title = "cor(y, yhat), ER, DMCC34", x = "train", y = "test")
+
+
+
+confusion.task.smv %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), ER, SM+Vis", x = "train", y = "test")
+
+```
+
+
+## composite
+
+```{r fig.width = 7, fig.height = 3}
+
+confusion.task.allparc <- cv.task(a[, !get.network(parcellation$key) %in% "Limbic", , ], cm.sum)
+confusion.task.fpn <- cv.task(a[, get.network(parcellation$key) == "Cont", , ], cm.sum)
+confusion.task.con <- cv.task(a[, get.network(parcellation$key) == "SalVentAttn", , ], cm.sum)
+confusion.task.ctrl <- cv.task(a[, get.network(parcellation$key) %in% c("Cont", "SalVentAttn"), , ], cm.sum)
+confusion.task.dmcc34 <- cv.task(a[, parcellation$key[dmcc34], , ], cm.sum)
+confusion.task.smv <- cv.task(a[, get.network(parcellation$key) %in% c("SomMot", "Vis"), , ], cm.sum)
+
+
+confusion.task.allparc %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), ER+RT, allparcs", x = "train", y = "test")
+
+
+confusion.task.fpn %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), ER+RT, FPN", x = "train", y = "test")
+
+
+confusion.task.con %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), ER+RT, CON", x = "train", y = "test")
+
+
+confusion.task.ctrl %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+
+  labs(title = "cor(y, yhat), ER+RT, FPN+CON", x = "train", y = "test")
+
+
+confusion.task.dmcc34 %>%
+    
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+
+  labs(title = "cor(y, yhat), ER+RT, DMCC34", x = "train", y = "test")
+
+
+
+confusion.task.smv %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "session") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(session)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  
+  labs(title = "cor(y, yhat), ER+RT, SM+Vis", x = "train", y = "test")
+
+```
+
+
+
+
+
+# brain--behavior: across session, within task
+
+## RT
+
+```{r fig.width = 7, fig.height = 2.75}
+
+
+
+cv.sess <- function(X, Y) {
+  
+  # X <- X %>% apply(c("task", "subj", "session"), function(x) scale(x))
+  # X <- aperm(X, c(3, 1, 2, 4))
+  # print(dim(X))
+  
+  res <- setNames(vector("list", length(tasks)), tasks)
+  
+  set.seed(0)
+  for (task.i in tasks) {
+    # task.i <- "Axcpt"
+    
+    M <- matrix(NA, ncol = 3, nrow = 3, dimnames = list(train = sessions, test = sessions))
+    
+    for (sess.train in sessions) {
+      # sess.train = "reactive"
+      
+      X_train <- X[, , task.i, sess.train]
+      y <- Y[task %in% task.i]
+    
+      ## make sure in same order:
+      
+      X_train <- scale(X_train[y$subj, ])
+      y_train <- scale(y[[sess.train]])
+      
+      # fitcv <- cv.glmnet(X_train, y_train, alpha = 0)  ## for tuning lambda
+      # fit <- glmnet(X_train, y_train, alpha = 0, lambda = fitcv$lambda.min)  ## for generating predictions
+      # yhat_train <- c(predict(fit, newx = X_train))
+      fit <- glmnet(X_train, y_train, alpha = 0, lambda = 3:1)  ## for generating predictions
+      yhat_train <- c(predict(fit, newx = X_train, s = 1))
+      r_train <- cor(y_train, yhat_train)
+      
+      M[sess.train, sess.train] <- r_train
+      
+      for (session.i in setdiff(sessions, sess.train)) {
+        # session.i = "proactive"
+        
+        ## test
+        
+        y_test <- Y[task %in% task.i]
+        X_test <- X[, , task.i, session.i]
+        X_test <- scale(X_test[y_test$subj, ])  ## same order
+        
+        yhat_test <- c(predict(fit, newx = X_test, s = 1))
+        # if (isTRUE(all.equal(var(yhat_test), 0))) next
+        r_test <- cor(y_test[[session.i]], yhat_test)
+        
+        M[sess.train, session.i] <- r_test
+        
+        
+      }
+      
+    }
+    
+    res[[task.i]] <- M
+    
+  }
+  
+  res
+
+}
+
+
+confusion.sess.allparc <- cv.sess(a[, !get.network(parcellation$key) %in% "Limbic", , ], rt.sum)
+confusion.sess.fpn     <- cv.sess(a[, get.network(parcellation$key) == "Cont", , ], rt.sum)
+confusion.sess.con     <- cv.sess(a[, get.network(parcellation$key) == "SalVentAttn", , ], rt.sum)
+confusion.sess.ctrl    <- cv.sess(a[, get.network(parcellation$key) %in% c("Cont", "SalVentAttn"), , ], rt.sum)
+confusion.sess.dmcc34  <- cv.sess(a[, parcellation$key[dmcc34], , ], rt.sum)
+confusion.sess.smv     <- cv.sess(a[, get.network(parcellation$key) %in% c("SomMot", "Vis"), , ], rt.sum)
+
+
+confusion.sess.allparc %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), RT, allparcs", x = "train", y = "test")
+
+
+
+confusion.sess.fpn %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), RT, FPN", x = "train", y = "test")
+
+
+
+confusion.sess.con %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), RT, CON", x = "train", y = "test")
+
+
+
+confusion.sess.ctrl %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), RT, FPN+CON", x = "train", y = "test")
+
+
+confusion.sess.dmcc34 %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), RT, dmcc34", x = "train", y = "test")
+
+
+confusion.sess.smv %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), RT, SomMot+Vis", x = "train", y = "test")
+
+
+
+```
+
+
+## ER
+
+```{r fig.width = 7, fig.height = 2.75}
+
+confusion.sess.allparc <- cv.sess(a[, !get.network(parcellation$key) %in% "Limbic", , ], er.sum)
+confusion.sess.fpn     <- cv.sess(a[, get.network(parcellation$key) == "Cont", , ], er.sum)
+confusion.sess.con     <- cv.sess(a[, get.network(parcellation$key) == "SalVentAttn", , ], er.sum)
+confusion.sess.ctrl    <- cv.sess(a[, get.network(parcellation$key) %in% c("Cont", "SalVentAttn"), , ], er.sum)
+confusion.sess.dmcc34  <- cv.sess(a[, parcellation$key[dmcc34], , ], er.sum)
+confusion.sess.smv     <- cv.sess(a[, get.network(parcellation$key) %in% c("SomMot", "Vis"), , ], er.sum)
+
+
+confusion.sess.allparc %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER, allparcs", x = "train", y = "test")
+
+
+
+confusion.sess.fpn %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER, FPN", x = "train", y = "test")
+
+
+
+confusion.sess.con %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER, CON", x = "train", y = "test")
+
+
+
+confusion.sess.ctrl %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER, FPN+CON", x = "train", y = "test")
+
+
+confusion.sess.dmcc34 %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER, dmcc34", x = "train", y = "test")
+
+
+confusion.sess.smv %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER, SomMot+Vis", x = "train", y = "test")
+
+
+
+```
+
+
+
+## composite
+
+```{r fig.width = 7, fig.height = 2.75}
+
+confusion.sess.allparc <- cv.sess(a[, !get.network(parcellation$key) %in% "Limbic", , ], cm.sum)
+confusion.sess.fpn     <- cv.sess(a[, get.network(parcellation$key) == "Cont", , ], cm.sum)
+confusion.sess.con     <- cv.sess(a[, get.network(parcellation$key) == "SalVentAttn", , ], cm.sum)
+confusion.sess.ctrl    <- cv.sess(a[, get.network(parcellation$key) %in% c("Cont", "SalVentAttn"), , ], cm.sum)
+confusion.sess.dmcc34  <- cv.sess(a[, parcellation$key[dmcc34], , ], cm.sum)
+confusion.sess.smv     <- cv.sess(a[, get.network(parcellation$key) %in% c("SomMot", "Vis"), , ], cm.sum)
+
+
+confusion.sess.allparc %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER+RT, allparcs", x = "train", y = "test")
+
+
+
+confusion.sess.fpn %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER+RT, FPN", x = "train", y = "test")
+
+
+
+confusion.sess.con %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER+RT, CON", x = "train", y = "test")
+
+
+
+confusion.sess.ctrl %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER+RT, FPN+CON", x = "train", y = "test")
+
+
+confusion.sess.dmcc34 %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER+RT, dmcc34", x = "train", y = "test")
+
+
+confusion.sess.smv %>%
+  
+  lapply(symmat4ggplot) %>%
+  bind_rows(.id = "task") %>%
+  
+  ggplot(aes(v1, v2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  
+  facet_grid(cols = vars(task)) +
+  scale_fill_gradient2(midpoint = 0) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("BAS", "PRO", "REA")) +
+  scale_y_discrete(labels = c("BAS", "PRO", "REA") %>% rev) +
+  geom_rect(aes(xmin = 0.5, xmax = 1.5, ymin = 0.5, ymax = 2.5), fill = "transparent", color = "black", size = 2) +
+  
+  labs(title = "cor(y, yhat), ER+RT, SomMot+Vis", x = "train", y = "test")
+
+
+```
+
+

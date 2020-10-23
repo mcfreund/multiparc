@@ -1,0 +1,89 @@
+---
+title: "behavioral QC analyses"
+author: "michael freund"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    theme: spacelab
+    highlight: zenburn
+---
+
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(
+  fig.align = 'center', fig.fullwidth = TRUE, cache = TRUE
+)
+
+source(here::here("code", "_packages.R"))
+source(here("code", "read-behav.R"))
+source(here("code", "_vars.R"))
+source(here("code", "_atlases.R"))
+source(here("code", "_settings.R"))
+
+```
+
+
+
+
+# baseline
+
+## glance at group-level fMRI data
+
+```{r}
+
+b <- a[, , , "baseline"]
+
+## multivariate outliers?
+
+mahal <- apply(
+  b, "task", function(x) mahalanobis(x, center = colMeans(x), cov = cov.shrink(x))
+)
+mahal %>%
+  as.data.frame %>%
+  reshape2::melt() %>%
+  
+  ggplot(aes(sample = value)) +
+  
+  stat_qq(distribution = qchisq, dparams = list(df = 400)) +
+  stat_qq_line(distribution = qchisq, dparams = list(df = 400)) +
+  facet_grid(cols = vars(variable))
+
+
+## univariate outliers?
+
+b %>%
+  reshape2::melt() %>%
+  as.data.frame %>%
+  
+  ggplot(aes(x = parcel, y = value)) +
+  
+  geom_boxplot(width = 0.1, notch = TRUE, fill = "grey40") +
+  facet_grid(vars(task))
+
+
+b %>%
+  reshape2::melt() %>%
+  as.data.frame %>%
+  
+  ggplot(aes(x = value)) +
+  
+  geom_density(aes(color = task), size = 2) +
+  scale_color_brewer(type = "qual", palette = 2)
+
+
+b.pvals <- apply(
+  b, c("task", "parcel"), function(x) wilcox.test(x, alternative = "greater")$p.value
+) %>%
+  apply("task", p.adjust, "fdr") %>% as.data.frame
+
+b.pvals %>% filter(Axcpt < 0.05) %>% nrow
+b.pvals %>% filter(Cuedts < 0.05) %>% nrow
+b.pvals %>% filter(Stern < 0.05) %>% nrow
+b.pvals %>% filter(Stroop < 0.05) %>% nrow
+
+```
+
